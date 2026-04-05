@@ -16,7 +16,6 @@ let deferredInstallPrompt = null;
 window.addEventListener('beforeinstallprompt', (e) => {
   e.preventDefault();
   deferredInstallPrompt = e;
-  // Kurulum butonunu göster
   const btn = document.getElementById('btn-install');
   if (btn) {
     btn.style.display = 'flex';
@@ -39,10 +38,10 @@ window.addEventListener('appinstalled', () => {
 });
 
 // ─── Socket.IO Bağlantısı ───────────────────────────────────────────────────────
-// GitHub Pages için Socket.IO çalışmaz, bu yüzden local server kullanıyoruz
-const socket = io('http://192.168.1.102:3000', {
-  transports: ['websocket'],
-  timeout: 5000,
+// GitHub Pages için Socket.IO cloud backend
+const socket = io('https://ciztahmin-server.onrender.com', {
+  transports: ['websocket', 'polling'],
+  timeout: 10000,
   forceNew: true
 });
 
@@ -63,7 +62,7 @@ let currentSize = 8;
 
 // ─── Socket.IO Event Listeners ─────────────────────────────────────────────────
 socket.on('connect', () => {
-  console.log('✅ Sunucuya bağlandı!');
+  console.log('✅ Cloud sunucuya bağlandı!');
   myId = socket.id;
   showNotification('Sunucuya bağlandı!', 'success');
 });
@@ -93,16 +92,39 @@ socket.on('room-joined', (data) => {
   updateRoomInfo(data.roomId);
 });
 
+socket.on('player-joined', (data) => {
+  console.log('👋 Oyuncu katıldı:', data);
+  updatePlayerList(data.players);
+});
+
+socket.on('player-left', (data) => {
+  console.log('👋 Oyuncu ayrıldı:', data);
+  updatePlayerList(data.players);
+});
+
+socket.on('game-state', (data) => {
+  console.log('🎮 Oyun durumu:', data);
+  gameState = data;
+  updateGameUI(data);
+});
+
 // ─── UI Functions ─────────────────────────────────────────────────────────────
 function showNotification(message, type = 'info') {
   console.log(message);
+  // iOS notification için
+  if ('Notification' in window && Notification.permission === 'granted') {
+    new Notification('ÇizTahmin', { body: message });
+  }
 }
 
 function showScreen(screenId) {
   document.querySelectorAll('.screen').forEach(screen => {
     screen.classList.remove('active');
   });
-  document.getElementById(screenId).classList.add('active');
+  const targetScreen = document.getElementById(screenId);
+  if (targetScreen) {
+    targetScreen.classList.add('active');
+  }
 }
 
 function updateRoomInfo(roomId) {
@@ -112,26 +134,110 @@ function updateRoomInfo(roomId) {
   }
 }
 
+function updatePlayerList(players) {
+  const playerList = document.getElementById('player-list');
+  if (playerList) {
+    playerList.innerHTML = '';
+    players.forEach(player => {
+      const li = document.createElement('li');
+      li.textContent = player.name || player.id;
+      if (player.id === myId) {
+        li.textContent += ' (Sen)';
+      }
+      playerList.appendChild(li);
+    });
+  }
+}
+
+function updateGameUI(data) {
+  // Oyun arayüzünü güncelle
+  if (data.currentWord) {
+    const wordDisplay = document.getElementById('word-display');
+    if (wordDisplay) {
+      wordDisplay.innerHTML = `<span class="word-hint">${data.currentWord}</span>`;
+    }
+  }
+  
+  if (data.isDrawing !== undefined) {
+    isDrawer = data.isDrawing;
+    const toolbar = document.getElementById('toolbar');
+    if (toolbar) {
+      toolbar.style.display = isDrawer ? 'block' : 'none';
+    }
+  }
+}
+
 // ─── Oda Oluşturma ───────────────────────────────────────────────────────────
 document.getElementById('btn-create-private')?.addEventListener('click', () => {
+  const playerName = document.getElementById('input-name')?.value.trim() || 'Oyuncu';
   console.log('🏠 Özel oda oluşturuluyor...');
-  socket.emit('create-room', { isPrivate: true });
+  socket.emit('create-room', { 
+    isPrivate: true, 
+    playerName: playerName 
+  });
 });
 
 document.getElementById('btn-join-private')?.addEventListener('click', () => {
-  const roomCode = document.getElementById('input-room-code').value.trim();
+  const roomCode = document.getElementById('input-room-code')?.value.trim();
+  const playerName = document.getElementById('input-name')?.value.trim() || 'Oyuncu';
+  
   if (roomCode) {
     console.log('👥 Odaya katılıyor:', roomCode);
-    socket.emit('join-room', { roomId: roomCode });
+    socket.emit('join-room', { 
+      roomId: roomCode, 
+      playerName: playerName 
+    });
   }
+});
+
+document.getElementById('btn-play')?.addEventListener('click', () => {
+  const playerName = document.getElementById('input-name')?.value.trim() || 'Oyuncu';
+  console.log('🎮 Hızlı oyna...');
+  socket.emit('join-random', { playerName: playerName });
 });
 
 // ─── Canvas Drawing ───────────────────────────────────────────────────────────
 if (canvas) {
+  // Touch events for iOS
+  canvas.addEventListener('touchstart', handleTouchStart, { passive: false });
+  canvas.addEventListener('touchmove', handleTouchMove, { passive: false });
+  canvas.addEventListener('touchend', handleTouchEnd, { passive: false });
+  
+  // Mouse events for desktop
   canvas.addEventListener('mousedown', startDrawing);
   canvas.addEventListener('mousemove', draw);
   canvas.addEventListener('mouseup', stopDrawing);
   canvas.addEventListener('mouseout', stopDrawing);
+}
+
+function handleTouchStart(e) {
+  e.preventDefault();
+  const touch = e.touches[0];
+  const rect = canvas.getBoundingClientRect();
+  const x = touch.clientX - rect.left;
+  const y = touch.clientY - rect.top;
+  
+  drawing = true;
+  ctx.beginPath();
+  ctx.moveTo(x, y);
+}
+
+function handleTouchMove(e) {
+  e.preventDefault();
+  if (!drawing) return;
+  
+  const touch = e.touches[0];
+  const rect = canvas.getBoundingClientRect();
+  const x = touch.clientX - rect.left;
+  const y = touch.clientY - rect.top;
+  
+  drawLine(x, y);
+}
+
+function handleTouchEnd(e) {
+  e.preventDefault();
+  drawing = false;
+  ctx.beginPath();
 }
 
 function startDrawing(e) {
@@ -151,6 +257,15 @@ function draw(e) {
   const x = e.clientX - rect.left;
   const y = e.clientY - rect.top;
   
+  drawLine(x, y);
+}
+
+function stopDrawing() {
+  drawing = false;
+  ctx.beginPath();
+}
+
+function drawLine(x, y) {
   ctx.lineWidth = currentSize;
   ctx.lineCap = 'round';
   ctx.strokeStyle = currentColor;
@@ -159,13 +274,98 @@ function draw(e) {
   ctx.stroke();
   ctx.beginPath();
   ctx.moveTo(x, y);
-}
-
-function stopDrawing() {
-  if (drawing) {
-    drawing = false;
-    ctx.beginPath();
+  
+  // Socket.IO ile çizim verisini gönder
+  if (socket && socket.connected) {
+    socket.emit('drawing', {
+      x: x,
+      y: y,
+      color: currentColor,
+      size: currentSize,
+      tool: currentTool
+    });
   }
 }
 
-console.log('🎮 ÇizTahmin oyunu yüklendi!');
+// ─── Drawing Events ─────────────────────────────────────────────────────────
+socket.on('drawing', (data) => {
+  if (!isDrawer) {
+    ctx.lineWidth = data.size;
+    ctx.lineCap = 'round';
+    ctx.strokeStyle = data.color;
+    
+    ctx.lineTo(data.x, data.y);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(data.x, data.y);
+  }
+});
+
+socket.on('clear-canvas', () => {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+});
+
+// ─── Tool Selection ───────────────────────────────────────────────────────────
+document.querySelectorAll('.tool-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.tool-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    currentTool = btn.dataset.tool;
+  });
+});
+
+document.querySelectorAll('.color-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    currentColor = btn.dataset.color;
+  });
+});
+
+document.querySelectorAll('.size-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.size-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    currentSize = parseInt(btn.dataset.size);
+  });
+});
+
+document.getElementById('btn-clear')?.addEventListener('click', () => {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  if (socket && socket.connected) {
+    socket.emit('clear-canvas');
+  }
+});
+
+// ─── Chat System ─────────────────────────────────────────────────────────────
+document.getElementById('btn-send')?.addEventListener('click', sendMessage);
+document.getElementById('chat-input')?.addEventListener('keypress', (e) => {
+  if (e.key === 'Enter') {
+    sendMessage();
+  }
+});
+
+function sendMessage() {
+  const input = document.getElementById('chat-input');
+  const message = input?.value.trim();
+  
+  if (message && socket && socket.connected) {
+    socket.emit('guess', message);
+    input.value = '';
+  }
+}
+
+socket.on('guess', (data) => {
+  const chatMessages = document.getElementById('chat-messages');
+  if (chatMessages) {
+    const messageDiv = document.createElement('div');
+    messageDiv.textContent = `${data.playerName}: ${data.message}`;
+    chatMessages.appendChild(messageDiv);
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+  }
+});
+
+// ─── Notification Permission ────────────────────────────────────────────────
+if ('Notification' in window && Notification.permission === 'default') {
+  Notification.requestPermission();
+}
+
+console.log('🎮 ÇizTahmin oyunu yüklendi - GitHub Pages sürümü!');
