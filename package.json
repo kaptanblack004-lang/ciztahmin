@@ -1,0 +1,13 @@
+{
+  "name": "cizim-oyunu",
+  "version": "1.0.0",
+  "description": "Skribbl.io benzeri çizim ve tahmin oyunu",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "socket.io": "^4.6.1"
+  }
+}
